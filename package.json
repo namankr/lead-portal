@@ -1,0 +1,21 @@
+{
+  "name": "lead-distribution-portal",
+  "version": "1.0.0",
+  "description": "Lightweight lead intake portal with real-time ops dashboard and HubSpot CRM sync",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@hubspot/api-client": "^11.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "socket.io": "^4.8.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

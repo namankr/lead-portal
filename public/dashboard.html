@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lead Distribution &mdash; Control Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/dashboard.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-title">
+      <span class="mark" aria-hidden="true">&#9673;</span>
+      <div>
+        <h1>Lead Distribution</h1>
+        <p>Control room</p>
+      </div>
+    </div>
+    <div class="live-indicator" id="socket-indicator">
+      <span class="dot"></span> <span id="socket-label">connecting&hellip;</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Signature element: live pipeline flow -->
+    <section class="pipeline" aria-label="Pipeline flow">
+      <div class="pipeline-node" data-node="form">
+        <span class="node-icon">&#9998;</span>
+        <span class="node-label">Web Form</span>
+      </div>
+      <div class="pipeline-track" data-track="form-backend"><span class="pulse"></span></div>
+      <div class="pipeline-node" data-node="backend">
+        <span class="node-icon">&#9881;</span>
+        <span class="node-label">Backend</span>
+      </div>
+      <div class="pipeline-track split-top" data-track="backend-dashboard"><span class="pulse"></span></div>
+      <div class="pipeline-track split-bottom" data-track="backend-hubspot"><span class="pulse"></span></div>
+      <div class="pipeline-node stacked">
+        <div class="pipeline-node small" data-node="dashboard">
+          <span class="node-icon">&#128200;</span>
+          <span class="node-label">This Dashboard</span>
+        </div>
+        <div class="pipeline-node small" data-node="hubspot" id="hubspot-node">
+          <span class="node-icon">&#9670;</span>
+          <span class="node-label">HubSpot CRM</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Analytics badges -->
+    <section class="badges">
+      <div class="badge">
+        <p class="badge-label">Total leads ingested</p>
+        <p class="badge-value" id="badge-total">0</p>
+      </div>
+      <div class="badge">
+        <p class="badge-label">Estimated pipeline value</p>
+        <p class="badge-value" id="badge-value">$0</p>
+      </div>
+      <div class="badge">
+        <p class="badge-label">Synced to HubSpot</p>
+        <p class="badge-value accent-green" id="badge-synced">0</p>
+      </div>
+      <div class="badge">
+        <p class="badge-label">Pending / retry</p>
+        <p class="badge-value accent-amber" id="badge-pending">0</p>
+      </div>
+      <div class="badge">
+        <p class="badge-label">Failed syncs</p>
+        <p class="badge-value accent-red" id="badge-failed">0</p>
+      </div>
+    </section>
+
+    <!-- HubSpot router control -->
+    <section class="router-panel" id="router-panel">
+      <div class="router-status">
+        <span class="status-dot" id="router-dot"></span>
+        <div>
+          <p class="router-title" id="router-title">Checking HubSpot connection&hellip;</p>
+          <p class="router-detail" id="router-detail">Verifying private app token against the CRM API.</p>
+        </div>
+      </div>
+      <button id="router-refresh" class="ghost-btn" type="button">Re-check connection</button>
+    </section>
+
+    <!-- Live lead feed -->
+    <section class="feed-wrap">
+      <div class="feed-header">
+        <h2>Live lead feed</h2>
+        <span class="feed-count" id="feed-count">0 leads</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Lead</th>
+              <th>Company</th>
+              <th>Budget</th>
+              <th>Local status</th>
+              <th>HubSpot sync</th>
+              <th>Received</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="feed-body">
+            <tr class="empty-row" id="empty-row">
+              <td colspan="7">No leads yet &mdash; submissions will appear here in real time.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
