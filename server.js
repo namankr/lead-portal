@@ -24,8 +24,8 @@ app.get("/healthz", (req, res) => res.json({ ok: true }));
 
 io.on("connection", async (socket) => {
   // Bring a freshly-opened dashboard tab up to date immediately
-  socket.emit("leads:init", db.getLeads());
-  socket.emit("analytics:update", db.getAnalytics());
+  socket.emit("leads:init", await db.getLeads());
+  socket.emit("analytics:update", await db.getAnalytics());
   socket.emit("hubspot:status", await hubspot.checkConnection());
 });
 

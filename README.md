@@ -24,10 +24,10 @@ call. The dashboard reflects the sync outcome (`syncing` -> `synced` /
 ## Stack
 
 - **Server:** Node.js, Express, Socket.io
-- **Storage:** a small JSON-file store (`services/db.js`) — deliberately
-  dependency-free so the project runs anywhere with just `npm install`,
-  no native build toolchain or database server required. Swap in
-  Postgres/MySQL there for production use.
+- **Storage:** `services/db.js` — JSON file at `data/leads.json` locally;
+  Upstash Redis (`@upstash/redis`) on Vercel when credentials are present.
+  *Note: the live deployment currently uses only the JSON-file backend
+  (ephemeral on Vercel). See [Deployment](#3-deployment-vercel) for context.*
 - **CRM integration:** `@hubspot/api-client`, HubSpot's official Node SDK
 - **Frontend:** plain HTML/CSS/JS, no build step
 
@@ -79,7 +79,81 @@ only how `ACCESS_TOKEN` is obtained.
 5. Restart the server. The dashboard's router control panel will flip to
    "Connected to HubSpot CRM" once it can reach the API.
 
-## 3. What happens on submission
+## 3. Deployment (Vercel)
+
+### What is currently live
+
+The deployed build corresponds to git commit `0091c0f` — **"first draft of the app"**.
+It is the only committed revision; all local changes described below are
+**uncommitted and not yet deployed**.
+
+**Live characteristics:**
+
+| Area | Deployed behaviour |
+|---|---|
+| Storage | `services/db.js` writes to `/tmp/leads.json`. Vercel's `/tmp` is ephemeral — wiped on every cold start and **not shared** across concurrent function instances. |
+| Data persistence | **None.** Leads are lost on every page refresh that hits a cold start. This is the known bug that prompted the work documented below. |
+| Socket.io | Runs inside a single `@vercel/node` serverless function. WebSocket upgrades work for the lifetime of a single invocation; the client-side REST fallback in `dashboard.js` re-hydrates the feed on reconnect. |
+| HubSpot sync | Works correctly — async background sync fires after the form POST returns. |
+| Auth | None. The dashboard (`/dashboard.html`) and all `/api/*` routes are publicly accessible. |
+
+---
+
+### What was built to fix it (ready to deploy)
+
+During this session the following files were changed to add a persistent
+Upstash Redis backend. **The code is complete and sitting in the working
+tree — it just needs to be committed and deployed.**
+
+| File | Change |
+|---|---|
+| `services/db.js` | Converted all exports to `async`. Added a Redis backend (via `@upstash/redis`) that activates when `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` are present; falls back to the JSON file locally. Dropped the ephemeral `/tmp` path entirely. |
+| `routes/leads.js` | Added `await` to all `db.*` calls throughout the route handlers and `syncLeadAsync`. |
+| `server.js` | Added `await` to `db.getLeads()` and `db.getAnalytics()` inside the Socket.io `connection` handler. |
+| `package.json` | Added `@upstash/redis ^1.38.0`. |
+
+**To deploy the fix:**
+
+1. In the [Vercel dashboard](https://vercel.com/dashboard), go to your
+   project → **Storage → Connect Store → Browse Marketplace** and add the
+   **Upstash Redis** integration (free Hobby tier is sufficient). Vercel
+   injects `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
+   automatically.
+2. Pull the env vars locally:
+   ```bash
+   vercel env pull .env
+   ```
+3. Commit and deploy:
+   ```bash
+   git add .
+   git commit -m "feat: persistent Upstash Redis storage + async db layer"
+   vercel deploy --prod
+   ```
+
+> **Legacy Vercel KV:** if the project previously used Vercel's
+> now-deprecated KV product, its `KV_REST_API_URL` / `KV_REST_API_TOKEN`
+> variables are accepted as a fallback — no changes needed.
+
+---
+
+### What could have been done better with more time
+
+These are improvements that were identified but not built due to time constraints.
+No code changes are needed to understand the limitations; they are documented here
+for whoever picks this up next.
+
+| Area | Current state | Recommended improvement |
+|---|---|---|
+| **Persistent storage** | Single Redis key holding a full JSON array; re-written on every lead insert or status update | Use individual Redis hash fields per lead (`HSET leads:<id> …`) or migrate to a relational store (Neon Postgres, PlanetScale) for indexed queries and atomic updates |
+| **Concurrency** | No locking — two simultaneous POSTs can read the same array, both append, and the second write silently drops the first | Upstash Redis `WATCH`/multi-exec, or row-level locking in a relational DB |
+| **Socket.io on serverless** | Works per-invocation but a cold-started function has no memory of previous subscribers | Replace with a managed pub/sub channel ([Pusher](https://pusher.com/), [Ably](https://ably.com/), or Socket.io + Upstash Redis adapter) so broadcasts reach all open tabs regardless of which function instance handles the write |
+| **Authentication** | None | Put the dashboard and `/api/*` routes behind your existing SSO or at minimum HTTP Basic Auth via a Vercel middleware edge function |
+| **Rate limiting** | None on the form endpoint | Add an edge middleware rate-limiter (Vercel's built-in `@vercel/edge` or Upstash `@upstash/ratelimit`) keyed on IP to prevent lead-spam |
+| **HubSpot retry durability** | Failed syncs are retried manually via the dashboard button; a process restart drops in-flight retries | Queue failed sync jobs in Redis (e.g. with Upstash QStash) so retries survive cold starts |
+| **Pagination** | `GET /api/leads` returns the full array | Add `?page=` / `?limit=` params and return a cursor so the dashboard doesn't load unbounded data as the list grows |
+| **Error observability** | `syncError` message is stored in the lead record and shown as a tooltip | Route errors to a structured logger (Axiom, Logtail) and set up an alert for sustained `hubspotStatus: "failed"` rates |
+
+## 4. What happens on submission
 
 1. **Validate** — server-side checks mirror the client-side ones (all
    fields required, email format, budget must be one of the three listed
@@ -120,21 +194,25 @@ only how `ACCESS_TOKEN` is obtained.
 ```
 server.js                 Express + Socket.io entrypoint
 routes/leads.js           Ingestion, validation, sync orchestration
-services/db.js            JSON-file local store + budget-value mapping
+services/db.js            Dual-backend store: JSON file (local) / Upstash Redis (deployed)
 services/hubspotService.js  HubSpot Contact/Deal upsert + connection check
 public/index.html          Client-facing form
 public/dashboard.html      Internal ops dashboard
 public/css, public/js      Styles and client-side logic for both pages
-data/leads.json             Local lead store (created on first run)
+data/leads.json             Local lead store (created on first run; not used on Vercel)
 ```
 
-## Notes & things to harden before production
+## Notes & known limitations
 
-- The JSON-file store has no concurrency control beyond Node's
-  single-threaded event loop — fine for a demo/internal tool at low
-  volume, not a substitute for a real database under real load.
-- No auth on the dashboard or API routes. Put this behind your existing
-  SSO/VPN before exposing it beyond localhost.
-- The budget-to-dollar-value mapping is a simple representative estimate
-  per bracket, not a real amount the client provided — treat the
-  "Estimated pipeline value" badge as directional.
+- **Leads disappear on Vercel refresh** — the live deployment stores data in
+  `/tmp`, which is ephemeral. This is the primary known bug. The fix
+  (Upstash Redis + async db layer) is built locally but not deployed;
+  see [Deployment](#3-deployment-vercel).
+- **No authentication** — the dashboard and all API routes are public.
+  Put this behind SSO or a VPN before sharing the URL externally.
+- **Storage concurrency** — the JSON-file and single-key Redis backends
+  both serialise the full leads array on every write. Fine at low volume;
+  not suitable under concurrent load.
+- **Budget values are representative** — `Under $10k` → $5 000,
+  `$10k–$50k` → $30 000, `Greater than $50k` → $75 000. The pipeline-value
+  badge is directional, not an exact figure the lead provided.

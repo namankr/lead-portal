@@ -36,8 +36,8 @@ module.exports = function leadsRouter() {
     }
 
     // 1. Persist locally first so the form gets a fast, reliable ack
-    const lead = db.insertLead(clean);
-    const stored = db.updateLead(lead.id, { localStatus: "stored" });
+    const lead = await db.insertLead(clean);
+    const stored = await db.updateLead(lead.id, { localStatus: "stored" });
 
     // 2. Push it onto the live dashboard immediately
     io.emit("lead:new", stored);
@@ -50,13 +50,13 @@ module.exports = function leadsRouter() {
   });
 
   // GET /api/leads - full lead list for initial dashboard load
-  router.get("/leads", (req, res) => {
-    res.json({ ok: true, leads: db.getLeads() });
+  router.get("/leads", async (req, res) => {
+    res.json({ ok: true, leads: await db.getLeads() });
   });
 
   // GET /api/analytics - summary badges
-  router.get("/analytics", (req, res) => {
-    res.json({ ok: true, analytics: db.getAnalytics() });
+  router.get("/analytics", async (req, res) => {
+    res.json({ ok: true, analytics: await db.getAnalytics() });
   });
 
   // GET /api/hubspot/status - live connection check for the router control panel
@@ -68,7 +68,7 @@ module.exports = function leadsRouter() {
   // POST /api/leads/:id/resync - manual retry from the dashboard
   router.post("/leads/:id/resync", async (req, res) => {
     const io = req.app.get("io");
-    const leads = db.getLeads();
+    const leads = await db.getLeads();
     const lead = leads.find((l) => l.id === req.params.id);
     if (!lead) return res.status(404).json({ ok: false, error: "Lead not found" });
     res.json({ ok: true });
@@ -79,16 +79,16 @@ module.exports = function leadsRouter() {
 };
 
 async function syncLeadAsync(leadId, io) {
-  const leads = db.getLeads();
+  const leads = await db.getLeads();
   const lead = leads.find((l) => l.id === leadId);
   if (!lead) return;
 
-  const syncing = db.updateLead(leadId, { hubspotStatus: "syncing", syncError: null });
+  const syncing = await db.updateLead(leadId, { hubspotStatus: "syncing", syncError: null });
   io.emit("lead:updated", syncing);
 
   try {
     const { contactId, dealId } = await hubspot.syncLeadToHubspot(lead);
-    const synced = db.updateLead(leadId, {
+    const synced = await db.updateLead(leadId, {
       hubspotStatus: "synced",
       hubspotContactId: contactId,
       hubspotDealId: dealId,
@@ -97,9 +97,9 @@ async function syncLeadAsync(leadId, io) {
     io.emit("lead:updated", synced);
   } catch (err) {
     const message = hubspot.extractHubspotError(err);
-    const failed = db.updateLead(leadId, { hubspotStatus: "failed", syncError: message });
+    const failed = await db.updateLead(leadId, { hubspotStatus: "failed", syncError: message });
     io.emit("lead:updated", failed);
   }
 
-  io.emit("analytics:update", db.getAnalytics());
+  io.emit("analytics:update", await db.getAnalytics());
 }

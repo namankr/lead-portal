@@ -81,6 +81,20 @@ main { padding: 28px 32px 60px; max-width: 1280px; margin: 0 auto; }
   font-size: 11px;
   color: var(--text-soft);
   z-index: 2;
+  text-decoration: none;
+}
+
+a.pipeline-node {
+  cursor: pointer;
+}
+
+a.pipeline-node:hover .node-icon {
+  border-color: var(--blue);
+  box-shadow: 0 0 14px rgba(76, 158, 255, 0.35);
+}
+
+a.pipeline-node:hover .node-label {
+  color: var(--blue);
 }
 
 .pipeline-node .node-icon {
