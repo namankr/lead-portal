@@ -6,11 +6,11 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "set NODE_EXTRA_CA_CERTS=D:\\lead-portal\\ca-bundle.pem && node --watch server.js"
   },
   "dependencies": {
     "@hubspot/api-client": "^11.2.0",
-    "@upstash/redis": "^1.38.0",
+    "@supabase/supabase-js": "^2.110.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",

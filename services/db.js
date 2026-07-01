@@ -1,72 +1,42 @@
 /**
  * db.js
- * Persistence layer with two backends:
- *  - Local dev: JSON file at data/leads.json
- *  - Deployed (Vercel or any host): Upstash Redis via @upstash/redis.
- *    Activated when UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN are set
- *    (populated automatically by the Vercel Upstash Redis integration).
- *    The legacy KV_REST_API_URL / KV_REST_API_TOKEN pair (old Vercel KV stores)
- *    is also accepted as a fallback.
+ * Persistence layer backed by Supabase (PostgreSQL).
+ * Requires two environment variables:
+ *   SUPABASE_URL   — your project URL  (https://<ref>.supabase.co)
+ *   SUPABASE_KEY   — service_role secret key (never the anon key in a server process)
+ *
+ * Run the following SQL once in the Supabase SQL editor to create the table:
+ *
+ *   CREATE TABLE leads (
+ *     id               TEXT PRIMARY KEY,
+ *     "firstName"      TEXT NOT NULL,
+ *     "lastName"       TEXT NOT NULL,
+ *     email            TEXT NOT NULL,
+ *     company          TEXT NOT NULL,
+ *     budget           TEXT NOT NULL,
+ *     "budgetValue"    INTEGER NOT NULL DEFAULT 0,
+ *     "localStatus"    TEXT NOT NULL DEFAULT 'received',
+ *     "hubspotStatus"  TEXT NOT NULL DEFAULT 'pending',
+ *     "hubspotContactId" TEXT,
+ *     "hubspotDealId"  TEXT,
+ *     "syncError"      TEXT,
+ *     "createdAt"      TIMESTAMPTZ NOT NULL DEFAULT now(),
+ *     "updatedAt"      TIMESTAMPTZ NOT NULL DEFAULT now()
+ *   );
  */
-const fs = require("fs");
-const path = require("path");
+const { createClient } = require("@supabase/supabase-js");
 
-// Use Redis when credentials are present (populated automatically by the
-// Vercel Upstash Redis integration, or set manually in .env).
-const REDIS_URL =
-  process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-const REDIS_TOKEN =
-  process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-const USE_KV = !!(REDIS_URL && REDIS_TOKEN);
-const KV_KEY = "leads";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-// ──────────── File-based storage (local dev) ────────────
-const DATA_DIR = path.join(__dirname, "..", "data");
-const DATA_FILE = path.join(DATA_DIR, "leads.json");
-
-function ensureStore() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify([], null, 2));
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  throw new Error(
+    "Missing Supabase credentials. Set SUPABASE_URL and SUPABASE_KEY environment variables."
+  );
 }
 
-function readAllFile() {
-  ensureStore();
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-  } catch {
-    return [];
-  }
-}
-
-function writeAllFile(leads) {
-  ensureStore();
-  fs.writeFileSync(DATA_FILE, JSON.stringify(leads, null, 2));
-}
-
-// ──────────── KV storage (Upstash Redis) ────────────
-function getRedis() {
-  const { Redis } = require("@upstash/redis");
-  return new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
-}
-
-async function readAllKV() {
-  const val = await getRedis().get(KV_KEY);
-  return Array.isArray(val) ? val : [];
-}
-
-async function writeAllKV(leads) {
-  await getRedis().set(KV_KEY, leads);
-}
-
-// ──────────── Unified async API ────────────
-async function readAll() {
-  return USE_KV ? readAllKV() : readAllFile();
-}
-
-async function writeAll(leads) {
-  if (USE_KV) return writeAllKV(leads);
-  writeAllFile(leads);
-}
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const TABLE = "leads";
 
 /** Budget dropdown -> a representative numeric value used for pipeline analytics. */
 const BUDGET_VALUE_MAP = {
@@ -80,7 +50,6 @@ function budgetToValue(budgetLabel) {
 }
 
 async function insertLead(lead) {
-  const leads = await readAll();
   const record = {
     id: `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     firstName: lead.firstName,
@@ -89,34 +58,42 @@ async function insertLead(lead) {
     company: lead.company,
     budget: lead.budget,
     budgetValue: budgetToValue(lead.budget),
-    localStatus: "received", // received -> validated -> stored
-    hubspotStatus: "pending", // pending -> syncing -> synced -> failed
+    localStatus: "received",
+    hubspotStatus: "pending",
     hubspotContactId: null,
     hubspotDealId: null,
     syncError: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  leads.unshift(record);
-  await writeAll(leads);
-  return record;
+
+  const { data, error } = await supabase.from(TABLE).insert(record).select().single();
+  if (error) throw new Error(`Supabase insertLead: ${error.message}`);
+  return data;
 }
 
 async function updateLead(id, patch) {
-  const leads = await readAll();
-  const idx = leads.findIndex((l) => l.id === id);
-  if (idx === -1) return null;
-  leads[idx] = { ...leads[idx], ...patch, updatedAt: new Date().toISOString() };
-  await writeAll(leads);
-  return leads[idx];
+  const { data, error } = await supabase
+    .from(TABLE)
+    .update({ ...patch, updatedAt: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw new Error(`Supabase updateLead: ${error.message}`);
+  return data;
 }
 
 async function getLeads() {
-  return readAll();
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .order("createdAt", { ascending: false });
+  if (error) throw new Error(`Supabase getLeads: ${error.message}`);
+  return data;
 }
 
 async function getAnalytics() {
-  const leads = await readAll();
+  const leads = await getLeads();
   const totalLeads = leads.length;
   const totalPipelineValue = leads.reduce((sum, l) => sum + (l.budgetValue || 0), 0);
   const synced = leads.filter((l) => l.hubspotStatus === "synced").length;
